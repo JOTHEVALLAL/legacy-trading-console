@@ -8,6 +8,7 @@ from datetime import datetime
 def load_data(path: str) -> pd.DataFrame:
     df = pd.read_excel(path)
 
+    # ---- normalize column names strongly ----
     df.columns = (
         df.columns
         .str.strip()
@@ -15,7 +16,27 @@ def load_data(path: str) -> pd.DataFrame:
         .str.replace("%", "", regex=False)
         .str.replace("(cr)", "", regex=False)
     )
+    
+    # ---- flexible column mapping ----
+    column_map = {
+        "liquidity": "liquidity",
+        "liquidity ": "liquidity",
+        "liquidity cr": "liquidity",
+        "adr": "adr",
+        "adr ": "adr",
+        "adr %": "adr",
+        "daily change": "daily change",
+        "daily change ": "daily change",
+        "price": "price",
+        "symbol": "symbol",
+        "sector": "sector",
+    }
+    
+    df = df.rename(columns=column_map)
 
+    # ---- compute MACD ----
+    df = compute_macd_status(df)
+    
     return df
 
 
