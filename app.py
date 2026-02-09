@@ -23,7 +23,7 @@ if 9 <= now.hour < 15:
     st.rerun()
 
 # ---------- File path ----------
-DATA_PATH = "data.xlsx"
+DATA_PATH = "https://docs.google.com/spreadsheets/d/1g3v450h_ormzOT_kW9nw3JF3rlJWOBoUYQuazpSfLlQ/export?format=xlsx"
 
 # ---------- Page setup ----------
 st.set_page_config(page_title="Legacy Trading Console", layout="wide")
