@@ -1,3 +1,4 @@
+import requests
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -378,3 +379,24 @@ def color_trend(val: str):
     if val == "Weak":
         return "background-color: #f8d7da"
     return ""
+    
+    
+# ---------- Telegram Alert ----------
+def send_telegram_alert(message: str):
+    import streamlit as st
+
+    token = st.secrets["TELEGRAM_TOKEN"]
+    chat_id = st.secrets["CHAT_ID"]
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "Markdown",
+    }
+
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print("Telegram alert failed:", e)
