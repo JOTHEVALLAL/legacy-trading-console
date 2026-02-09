@@ -17,9 +17,27 @@ def load_data(path: str) -> pd.DataFrame:
         .str.replace("(cr)", "", regex=False)
     )
     
-     # 🔴 ADD THIS LINE (temporary diagnostic)
-    print("CLOUD COLUMN NAMES →", list(df.columns))
+     # ---- smart column mapping from broker sheet ----
+    column_map = {
+        "symbol": "symbol",
+        "adr": "adr",
+        "adr ": "adr",
+        "adr%": "adr",
+        "liquidity rush": "liquidity",   # ⭐ KEY FIX
+        "liquidity": "liquidity",
+        "price": "price",
+        "daily change": "daily change",
+        "sector": "sector",
+    }
+    
+    df = df.rename(columns=column_map)
 
+    # ---- ensure required columns exist ----
+    required_cols = ["liquidity", "adr", "price", "daily change", "symbol", "sector"]
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = 0
+            
     # ---- compute MACD ----
     df = compute_macd_status(df)
     
