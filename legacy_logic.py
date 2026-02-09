@@ -17,22 +17,8 @@ def load_data(path: str) -> pd.DataFrame:
         .str.replace("(cr)", "", regex=False)
     )
     
-    # ---- flexible column mapping ----
-    column_map = {
-        "liquidity": "liquidity",
-        "liquidity ": "liquidity",
-        "liquidity cr": "liquidity",
-        "adr": "adr",
-        "adr ": "adr",
-        "adr %": "adr",
-        "daily change": "daily change",
-        "daily change ": "daily change",
-        "price": "price",
-        "symbol": "symbol",
-        "sector": "sector",
-    }
-    
-    df = df.rename(columns=column_map)
+     # 🔴 ADD THIS LINE (temporary diagnostic)
+    print("CLOUD COLUMN NAMES →", list(df.columns))
 
     # ---- compute MACD ----
     df = compute_macd_status(df)
