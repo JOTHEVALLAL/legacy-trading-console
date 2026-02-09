@@ -37,6 +37,20 @@ df = load_data(DATA_PATH)
 df = compute_macd_status(df)
 
 swing_df = swing_filter(df)
+
+# ---------- Detect NEW Early Expansion ----------
+early_expansion = swing_df[swing_df["macd status"] == "Early Expansion"]
+
+if not early_expansion.empty:
+    for _, row in early_expansion.iterrows():
+        msg = (
+            "📈 *NEW EARLY EXPANSION*\n\n"
+            f"Stock: {row['symbol']}\n"
+            f"ADR: {row['adr']:.2f}%\n"
+            f"Liquidity: ₹{row['liquidity']:.2f} Cr"
+        )
+        send_telegram_alert(msg)
+
 pos_df = positional_filter(df)
 near_df = near_miss_filter(df)
 meta = metadata_footer(DATA_PATH, df)
@@ -84,18 +98,7 @@ st.dataframe(
 
 from legacy_logic import send_telegram_alert
 
-# ---------- Detect NEW Early Expansion ----------
-early_expansion = swing_df[swing_df["macd status"] == "Early Expansion"]
 
-if not early_expansion.empty:
-    for _, row in early_expansion.iterrows():
-        msg = (
-            "📈 *NEW EARLY EXPANSION*\n\n"
-            f"Stock: {row['symbol']}\n"
-            f"ADR: {row['adr']:.2f}%\n"
-            f"Liquidity: ₹{row['liquidity']:.2f} Cr"
-        )
-        send_telegram_alert(msg)
 
 
 # ---------- Metadata ----------
