@@ -12,8 +12,9 @@ from legacy_logic import (
     build_positional_table,
     build_near_miss_table,
     compute_macd_status,
-    color_macd,      # ✅ added
-    color_trend,     # ✅ added
+    color_macd,
+    color_trend,
+    send_telegram_alert,
 )
 
 # ---------- NSE auto refresh ----------
@@ -25,7 +26,6 @@ if 9 <= now.hour < 15:
 # ---------- File path ----------
 DATA_PATH = "https://docs.google.com/spreadsheets/d/1mKkUz7qQlZr8KqCtIOQuBw2mbUEGlgel/export?format=xlsx"
 
-
 # ---------- Page setup ----------
 st.set_page_config(page_title="Legacy Trading Console", layout="wide")
 st.title("📊 Legacy Template — Production Dashboard")
@@ -33,24 +33,29 @@ st.title("📊 Legacy Template — Production Dashboard")
 # ---------- Load data ----------
 df = load_data(DATA_PATH)
 
-# 🔴 Ensure MACD computed
+# Ensure MACD computed
 df = compute_macd_status(df)
 
+# ---------- Swing ----------
 swing_df = swing_filter(df)
 
-# ---------- Detect NEW Early Expansion ----------
-early_expansion = swing_df[swing_df["macd status"] == "Early Expansion"]
+# ---------- Detect NEW Early Expansion (once per run) ----------
+if "alert_sent" not in st.session_state:
+    early_expansion = swing_df[swing_df["macd status"] == "Early Expansion"]
 
-if not early_expansion.empty:
-    for _, row in early_expansion.iterrows():
-        msg = (
-            "📈 *NEW EARLY EXPANSION*\n\n"
-            f"Stock: {row['symbol']}\n"
-            f"ADR: {row['adr']:.2f}%\n"
-            f"Liquidity: ₹{row['liquidity']:.2f} Cr"
-        )
-        send_telegram_alert(msg)
+    if not early_expansion.empty:
+        for _, row in early_expansion.iterrows():
+            msg = (
+                "📈 *NEW EARLY EXPANSION*\n\n"
+                f"Stock: {row['symbol']}\n"
+                f"ADR: {row['adr']:.2f}%\n"
+                f"Liquidity: ₹{row['liquidity']:.2f} Cr"
+            )
+            send_telegram_alert(msg)
 
+    st.session_state.alert_sent = True
+
+# ---------- Other tables ----------
 pos_df = positional_filter(df)
 near_df = near_miss_filter(df)
 meta = metadata_footer(DATA_PATH, df)
@@ -60,8 +65,7 @@ swing_table = build_swing_table(swing_df)
 pos_table = build_positional_table(pos_df)
 near_table = build_near_miss_table(near_df)
 
-# ---------- Display tables with institutional styling + 2-decimal format ----------
-
+# ---------- Number formatting ----------
 num_format = {
     "Score": "{:.2f}",
     "Price (₹)": "{:.2f}",
@@ -70,7 +74,7 @@ num_format = {
     "Liquidity (₹ Cr)": "{:.2f}",
 }
 
-
+# ---------- Display ----------
 st.subheader("🚀 Swing Candidates")
 st.dataframe(
     swing_table.style
@@ -95,11 +99,6 @@ st.dataframe(
         .format(num_format),
     width="stretch",
 )
-
-from legacy_logic import send_telegram_alert
-
-
-
 
 # ---------- Metadata ----------
 st.divider()
