@@ -82,6 +82,22 @@ st.dataframe(
     width="stretch",
 )
 
+from legacy_logic import send_telegram_alert
+
+# ---------- Detect NEW Early Expansion ----------
+early_expansion = swing_df[swing_df["macd status"] == "Early Expansion"]
+
+if not early_expansion.empty:
+    for _, row in early_expansion.iterrows():
+        msg = (
+            "📈 *NEW EARLY EXPANSION*\n\n"
+            f"Stock: {row['symbol']}\n"
+            f"ADR: {row['adr']:.2f}%\n"
+            f"Liquidity: ₹{row['liquidity']:.2f} Cr"
+        )
+        send_telegram_alert(msg)
+
+
 # ---------- Metadata ----------
 st.divider()
 st.subheader("Run Metadata")
