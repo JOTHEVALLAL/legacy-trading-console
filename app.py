@@ -7,6 +7,8 @@ from legacy_logic import (
     build_positional_table,
     near_miss_filter,
     metadata_footer,
+    color_macd,
+    color_trend,
 )
 
 # --------------------------------------------------
@@ -54,11 +56,37 @@ near_table = near_df.rename(columns={
 # DISPLAY
 # --------------------------------------------------
 
-st.subheader("🚀 Swing Candidates")
-st.dataframe(swing_table, use_container_width=True)
+# ---------- Number Formatting ----------
+num_format = {
+    "Score": "{:.2f}",
+    "Price": "{:.2f}",
+    "% Chg": "{:.2f}",
+    "ADR %": "{:.2f}",
+    "Liquidity": "{:,.2f}",
+}
 
+# ---------- Swing Table ----------
+st.subheader("🚀 Swing Candidates")
+
+st.dataframe(
+    swing_table.style
+        .applymap(color_macd, subset=["MACD Status"])
+        .format(num_format),
+    use_container_width=True
+)
+
+# ---------- Positional Table ----------
 st.subheader("📈 Top Positional Opportunities")
-st.dataframe(pos_table, use_container_width=True)
+
+st.dataframe(
+    pos_table.style
+        .applymap(color_macd, subset=["MACD Status"])
+        .applymap(color_trend, subset=["Trend Strength"])
+        .format(num_format),
+    use_container_width=True
+)
+
+
 
 st.subheader("⚠️ Near-Miss Swing")
 st.dataframe(near_table, use_container_width=True)

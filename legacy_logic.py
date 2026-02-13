@@ -14,7 +14,7 @@ def load_data(path: str) -> pd.DataFrame:
     else:
         df = pd.read_excel(path)
 
-    # ---- normalize column names ----
+    # ---- Normalize column names ----
     df.columns = (
         df.columns
         .str.strip()
@@ -23,24 +23,24 @@ def load_data(path: str) -> pd.DataFrame:
         .str.replace("(cr)", "", regex=False)
         .str.replace(" ", "_", regex=False)
     )
-
-    # ---- flexible column mapping ----
-    column_map = {
+    
+    # ---- Rename only what is needed ----
+    df = df.rename(columns={
         "symbol": "symbol",
         "adr": "adr",
-        "adr_": "adr",
-        "liquidity": "liquidity",
         "liquidity_rush": "liquidity",
         "price": "price",
-        "close": "price",
         "daily_change": "pct_chg",
-        "change": "pct_chg",
         "sector": "sector"
-    }
+    })
 
-    df = df.rename(columns=column_map)
+    # ---- DO NOT MAP close → price ----
+    # Close columns must remain separate for MACD
 
-    # ---- ensure required fields ----
+    # ---- Remove duplicate columns safely ----
+    df = df.loc[:, ~df.columns.duplicated()]
+
+    # ---- Ensure required fields ----
     required = ["symbol", "adr", "liquidity", "price", "pct_chg", "sector"]
     for col in required:
         if col not in df.columns:
@@ -49,6 +49,7 @@ def load_data(path: str) -> pd.DataFrame:
     df = compute_macd_status(df)
 
     return df
+    
 
 
 # =========================================================
@@ -59,19 +60,24 @@ def compute_macd_status(df: pd.DataFrame) -> pd.DataFrame:
 
     close_cols = [c for c in df.columns if c.startswith("close")]
 
-    # If no historical series → fallback simple status
     if len(close_cols) < 26:
-        df["macd_status"] = "Mixed"
+        df["macd_status"] = "Negative"
         return df
 
-    # Sort closes oldest → newest
-    close_cols = sorted(close_cols)
+    # ---- Proper chronological sorting ----
+    def extract_number(col):
+        if col == "close":
+            return 0
+        return int(col.split("-")[1])
 
-    macd_status_list = []
+    # Oldest → Newest
+    close_cols_sorted = sorted(close_cols, key=extract_number, reverse=True)
+
+    macd_results = []
 
     for _, row in df.iterrows():
 
-        closes = row[close_cols].values.astype(float)
+        closes = row[close_cols_sorted].astype(float).values
         series = pd.Series(closes)
 
         ema12 = series.ewm(span=12, adjust=False).mean()
@@ -80,19 +86,23 @@ def compute_macd_status(df: pd.DataFrame) -> pd.DataFrame:
         signal = macd.ewm(span=9, adjust=False).mean()
         hist = macd - signal
 
-        if macd.iloc[-1] > signal.iloc[-1] and hist.iloc[-1] > 0:
-            if hist.iloc[-1] > 0.25:
-                macd_status_list.append("Expansion")
-            else:
-                macd_status_list.append("Positive")
-        elif macd.iloc[-1] > signal.iloc[-1]:
-            macd_status_list.append("Early Expansion")
-        elif macd.iloc[-1] < signal.iloc[-1] and hist.iloc[-1] < 0:
-            macd_status_list.append("Distribution")
-        else:
-            macd_status_list.append("Mixed")
+        last_hist = hist.iloc[-1]
+        prev_hist = hist.iloc[-2]
 
-    df["macd_status"] = macd_status_list
+        # ---- Legacy Classification ----
+        if last_hist > 0 and prev_hist <= 0:
+            macd_results.append("Early Expansion")
+
+        elif last_hist > prev_hist > 0:
+            macd_results.append("Expansion")
+
+        elif last_hist > 0:
+            macd_results.append("Positive")
+
+        else:
+            macd_results.append("Negative")
+
+    df["macd_status"] = macd_results
     return df
 
 
@@ -148,22 +158,35 @@ def compute_swing_score(row):
 
     return round(liquidity_score + adr_score + macd_score + 15, 2)
 
-
 def compute_positional_score(row):
 
+    # --- Base scaling ---
     liquidity_score = min(row["liquidity"] / 2000, 1) * 30
     adr_score = min(row["adr"] / 5, 1) * 15
 
     macd_map = {
         "Expansion": 25,
-        "Positive": 22,
-        "Early Expansion": 18,
-        "Mixed": 10
+        "Early Expansion": 22,
+        "Positive": 18,
+        "Negative": 5
     }
 
     macd_score = macd_map.get(row["macd_status"], 5)
 
-    return round(liquidity_score + adr_score + macd_score + 30, 2)
+    # --- Suitability adjustment ---
+    if row["macd_status"] == "Negative":
+        suitability_score = 10   # reduced from 30
+    else:
+        suitability_score = 30
+
+    total_score = liquidity_score + adr_score + macd_score + suitability_score
+
+    # Optional: Cap negative momentum score
+    if row["macd_status"] == "Negative":
+        total_score = min(total_score, 60)
+
+    return round(total_score, 2)
+
 
 
 # =========================================================
@@ -186,6 +209,10 @@ def classify_swing_trade_style(row):
 
 def classify_positional_trade_style(row):
 
+
+    if row["macd_status"] == "Negative":
+        return "Weak Structure"
+
     if row["score"] >= 85 and row["macd_status"] in ["Expansion", "Positive"]:
         return "Structural Trend"
 
@@ -193,7 +220,6 @@ def classify_positional_trade_style(row):
         return "Positional Momentum"
 
     return "Accumulation Phase"
-
 
 # =========================================================
 # BUILD SWING TABLE (LOCKED FORMAT)
@@ -228,21 +254,33 @@ def build_swing_table(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================================================
-# BUILD POSITIONAL TABLE (LOCKED FORMAT)
+# BUILD POSITIONAL TABLE (QUALITY FILTERED)
 # =========================================================
 
 def build_positional_table(df: pd.DataFrame) -> pd.DataFrame:
 
+    # --- Compute score first ---
     df["score"] = df.apply(compute_positional_score, axis=1)
+
+    # --- Quality Filter ---
+    df = df[
+        (df["macd_status"].isin(["Expansion", "Early Expansion", "Positive"])) &
+        (df["score"] >= 70)
+    ].copy()
+
+    # --- Add Bias & Style ---
     df["trade_bias"] = "Bullish"
     df["trade_style"] = df.apply(classify_positional_trade_style, axis=1)
 
+    # --- Strength & Action ---
     df["trend_strength"] = np.where(df["score"] >= 85, "Strong", "Moderate")
     df["portfolio_action"] = np.where(df["score"] >= 80, "Accumulate", "Hold")
 
+    # --- Sort & Rank ---
     df = df.sort_values("score", ascending=False).reset_index(drop=True)
     df["rank"] = df.index + 1
 
+    # --- Return Locked Structure ---
     return df.rename(columns={
         "symbol": "Symbol",
         "macd_status": "MACD Status",
@@ -280,3 +318,37 @@ def metadata_footer(source_file, version="Legacy v1.2.6"):
         "Version_Tag": version,
         "Market Session": session
     }
+
+# =========================================================
+# STYLING HELPERS
+# =========================================================
+
+def color_macd(val):
+
+    if val == "Expansion":
+        return "background-color: #c6e6c3"   # soft green
+
+    if val == "Early Expansion":
+        return "background-color: #d4f4dd"   # lighter green
+
+    if val == "Positive":
+        return "background-color: #fff3cd"   # soft yellow
+
+    if val == "Negative":
+        return "background-color: #f8d7da"   # soft red
+
+    return ""
+
+
+def color_trend(val):
+
+    if val == "Strong":
+        return "background-color: #c6e6c3"   # green
+
+    if val == "Moderate":
+        return "background-color: #fff3cd"   # yellow
+
+    if val == "Weak":
+        return "background-color: #f8d7da"   # red
+
+    return ""
