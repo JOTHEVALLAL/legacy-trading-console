@@ -23,8 +23,7 @@ def load_data(path: str) -> pd.DataFrame:
         .str.replace("(cr)", "", regex=False)
         .str.replace(" ", "_", regex=False)
     )
-    
-    # ---- Rename only what is needed ----
+
     df = df.rename(columns={
         "symbol": "symbol",
         "adr": "adr",
@@ -34,13 +33,8 @@ def load_data(path: str) -> pd.DataFrame:
         "sector": "sector"
     })
 
-    # ---- DO NOT MAP close → price ----
-    # Close columns must remain separate for MACD
-
-    # ---- Remove duplicate columns safely ----
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # ---- Ensure required fields ----
     required = ["symbol", "adr", "liquidity", "price", "pct_chg", "sector"]
     for col in required:
         if col not in df.columns:
@@ -49,11 +43,62 @@ def load_data(path: str) -> pd.DataFrame:
     df = compute_macd_status(df)
 
     return df
-    
 
 
 # =========================================================
-# MACD ENGINE (Row-wise historical close support)
+# CLOSE SERIES HELPER (ROBUST)
+# =========================================================
+
+def get_close_series(row):
+
+    close_cols = [c for c in row.index if c.startswith("close")]
+
+    def extract_number(col):
+        if col == "close":
+            return 0
+        digits = ''.join(filter(str.isdigit, col))
+        return int(digits) if digits else 0
+
+    close_cols_sorted = sorted(close_cols, key=extract_number, reverse=True)
+    closes = row[close_cols_sorted].astype(float).values
+
+    return pd.Series(closes)
+
+
+# =========================================================
+# ENTRY + SIGNAL (Close-Based Breakout)
+# =========================================================
+
+def compute_entry_signal(row):
+
+    series = get_close_series(row)
+
+    if len(series) < 30:
+        return "", ""
+
+    pivot_close = series.iloc[-30:].max()
+    current_close = series.iloc[-1]
+
+    distance_pct = (pivot_close - current_close) / pivot_close * 100
+    entry_price = round(pivot_close * 1.002, 2)
+
+    icon = ""
+    signal = ""
+
+    if current_close >= pivot_close:
+        icon = " 🔥"
+        signal = "Breakout – Day 1"
+    elif distance_pct <= 2:
+        icon = " ⚡"
+        signal = f"Near Pivot ({round(distance_pct,2)}%)"
+    else:
+        signal = f"Watching – {round(distance_pct,2)}% below"
+
+    return f"{entry_price}{icon}", signal
+
+
+# =========================================================
+# MACD ENGINE
 # =========================================================
 
 def compute_macd_status(df: pd.DataFrame) -> pd.DataFrame:
@@ -64,13 +109,12 @@ def compute_macd_status(df: pd.DataFrame) -> pd.DataFrame:
         df["macd_status"] = "Negative"
         return df
 
-    # ---- Proper chronological sorting ----
     def extract_number(col):
         if col == "close":
             return 0
-        return int(col.split("-")[1])
+        digits = ''.join(filter(str.isdigit, col))
+        return int(digits) if digits else 0
 
-    # Oldest → Newest
     close_cols_sorted = sorted(close_cols, key=extract_number, reverse=True)
 
     macd_results = []
@@ -89,16 +133,12 @@ def compute_macd_status(df: pd.DataFrame) -> pd.DataFrame:
         last_hist = hist.iloc[-1]
         prev_hist = hist.iloc[-2]
 
-        # ---- Legacy Classification ----
         if last_hist > 0 and prev_hist <= 0:
             macd_results.append("Early Expansion")
-
         elif last_hist > prev_hist > 0:
             macd_results.append("Expansion")
-
         elif last_hist > 0:
             macd_results.append("Positive")
-
         else:
             macd_results.append("Negative")
 
@@ -107,7 +147,7 @@ def compute_macd_status(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================================================
-# SWING HARD GATE FILTER
+# SWING FILTER
 # =========================================================
 
 def swing_filter(df: pd.DataFrame) -> pd.DataFrame:
@@ -118,6 +158,163 @@ def swing_filter(df: pd.DataFrame) -> pd.DataFrame:
         (df["macd_status"].isin(["Early Expansion", "Expansion", "Positive"]))
     ].copy()
 
+
+# =========================================================
+# SCORING ENGINES (UNCHANGED)
+# =========================================================
+
+def compute_swing_score(row):
+
+    liquidity_score = min(row["liquidity"] / 1000, 1) * 30
+    adr_score = min(row["adr"] / 5, 1) * 25
+
+    macd_map = {
+        "Expansion": 30,
+        "Positive": 25,
+        "Early Expansion": 20
+    }
+
+    macd_score = macd_map.get(row["macd_status"], 0)
+
+    return round(liquidity_score + adr_score + macd_score + 15, 2)
+
+
+def compute_positional_score(row):
+
+    liquidity_score = min(row["liquidity"] / 2000, 1) * 30
+    adr_score = min(row["adr"] / 5, 1) * 15
+
+    macd_map = {
+        "Expansion": 25,
+        "Early Expansion": 22,
+        "Positive": 18,
+        "Negative": 5
+    }
+
+    macd_score = macd_map.get(row["macd_status"], 5)
+
+    suitability_score = 10 if row["macd_status"] == "Negative" else 30
+
+    total_score = liquidity_score + adr_score + macd_score + suitability_score
+
+    if row["macd_status"] == "Negative":
+        total_score = min(total_score, 60)
+
+    return round(total_score, 2)
+
+
+# =========================================================
+# SWING TABLE
+# =========================================================
+
+def build_swing_table(df: pd.DataFrame) -> pd.DataFrame:
+
+    df = swing_filter(df)
+
+    df["score"] = df.apply(compute_swing_score, axis=1)
+    df["trade_bias"] = "Bullish"
+    df["trade_style"] = "Momentum"
+
+    entries = df.apply(compute_entry_signal, axis=1)
+    df["Entry (₹)"] = [e[0] for e in entries]
+    df["Signal"] = [e[1] for e in entries]
+
+    df = df.sort_values("score", ascending=False).reset_index(drop=True)
+    df["rank"] = df.index + 1
+
+    return df.rename(columns={
+        "symbol": "Symbol",
+        "macd_status": "MACD Status",
+        "score": "Score",
+        "price": "Price",
+        "pct_chg": "% Chg",
+        "adr": "ADR %",
+        "liquidity": "Liquidity",
+        "sector": "Sector",
+        "trade_bias": "Trade Bias",
+        "trade_style": "Trade Style",
+        "rank": "Rank"
+    })[[
+        "Rank","Symbol","Trade Bias","Trade Style","MACD Status",
+        "Score","Entry (₹)","Signal",
+        "Price","% Chg","ADR %","Liquidity","Sector"
+    ]]
+
+
+# =========================================================
+# VCP (Close-Based Fast Cycle)
+# =========================================================
+
+def compute_vcp_status(row):
+
+    series = get_close_series(row).tail(50)
+
+    if len(series) < 40:
+        return ""
+
+    seg_A = series.iloc[0:15].std()
+    seg_B = series.iloc[15:30].std()
+    seg_C = series.iloc[30:].std()
+
+    contraction = (seg_B < seg_A) and (seg_C < seg_B)
+
+    pivot_close = series.iloc[-30:].max()
+    current_close = series.iloc[-1]
+    distance_pct = (pivot_close - current_close) / pivot_close * 100
+
+    if contraction and distance_pct <= 2:
+        return "Confirmed VCP"
+    elif contraction and distance_pct <= 4:
+        return "Valid VCP"
+    elif seg_C < seg_B:
+        return "Developing VCP"
+    else:
+        return ""
+
+
+# =========================================================
+# POSITIONAL TABLE
+# =========================================================
+
+def build_positional_table(df: pd.DataFrame) -> pd.DataFrame:
+
+    df["score"] = df.apply(compute_positional_score, axis=1)
+
+    df = df[
+        (df["macd_status"].isin(["Expansion", "Early Expansion", "Positive"])) &
+        (df["score"] >= 70)
+    ].copy()
+
+    df["trade_bias"] = "Bullish"
+    df["trade_style"] = "Positional"
+    df["trend_strength"] = np.where(df["score"] >= 85, "Strong", "Moderate")
+    df["portfolio_action"] = np.where(df["score"] >= 80, "Accumulate", "Hold")
+
+    df["VCP Status"] = df.apply(compute_vcp_status, axis=1)
+
+    df = df.sort_values("score", ascending=False).reset_index(drop=True)
+    df["rank"] = df.index + 1
+
+    return df.rename(columns={
+        "symbol": "Symbol",
+        "macd_status": "MACD Status",
+        "score": "Score",
+        "price": "Price",
+        "pct_chg": "% Chg",
+        "adr": "ADR %",
+        "liquidity": "Liquidity",
+        "sector": "Sector",
+        "trade_bias": "Trade Bias",
+        "trade_style": "Trade Style",
+        "trend_strength": "Trend Strength",
+        "portfolio_action": "Portfolio Action",
+        "rank": "Rank"
+    })[[
+        "Rank","Symbol","Trade Bias","Trade Style","MACD Status",
+        "VCP Status",
+        "Score","Price","% Chg","ADR %","Liquidity",
+        "Trend Strength","Portfolio Action","Sector"
+    ]]
 
 # =========================================================
 # NEAR MISS FILTER (LOCKED)
@@ -138,175 +335,15 @@ def near_miss_filter(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     return pd.concat([adr_near, macd_near]).copy()
+    
+    
 
 
 # =========================================================
-# SCORING ENGINES
+# METADATA
 # =========================================================
 
-def compute_swing_score(row):
-
-    liquidity_score = min(row["liquidity"] / 1000, 1) * 30
-    adr_score = min(row["adr"] / 5, 1) * 25
-
-    macd_map = {
-        "Expansion": 30,
-        "Positive": 25,
-        "Early Expansion": 20
-    }
-    macd_score = macd_map.get(row["macd_status"], 0)
-
-    return round(liquidity_score + adr_score + macd_score + 15, 2)
-
-def compute_positional_score(row):
-
-    # --- Base scaling ---
-    liquidity_score = min(row["liquidity"] / 2000, 1) * 30
-    adr_score = min(row["adr"] / 5, 1) * 15
-
-    macd_map = {
-        "Expansion": 25,
-        "Early Expansion": 22,
-        "Positive": 18,
-        "Negative": 5
-    }
-
-    macd_score = macd_map.get(row["macd_status"], 5)
-
-    # --- Suitability adjustment ---
-    if row["macd_status"] == "Negative":
-        suitability_score = 10   # reduced from 30
-    else:
-        suitability_score = 30
-
-    total_score = liquidity_score + adr_score + macd_score + suitability_score
-
-    # Optional: Cap negative momentum score
-    if row["macd_status"] == "Negative":
-        total_score = min(total_score, 60)
-
-    return round(total_score, 2)
-
-
-
-# =========================================================
-# TRADE STYLE (STANDARDIZED)
-# =========================================================
-
-def classify_swing_trade_style(row):
-
-    if row["macd_status"] in ["Expansion", "Positive"] and row["adr"] >= 5:
-        return "Volatility Expansion"
-
-    if row["macd_status"] in ["Expansion", "Early Expansion"] and row["pct_chg"] >= 2:
-        return "Breakout Setup"
-
-    if row["macd_status"] == "Early Expansion":
-        return "Momentum Expansion"
-
-    return "Trend Continuation"
-
-
-def classify_positional_trade_style(row):
-
-
-    if row["macd_status"] == "Negative":
-        return "Weak Structure"
-
-    if row["score"] >= 85 and row["macd_status"] in ["Expansion", "Positive"]:
-        return "Structural Trend"
-
-    if row["score"] >= 75:
-        return "Positional Momentum"
-
-    return "Accumulation Phase"
-
-# =========================================================
-# BUILD SWING TABLE (LOCKED FORMAT)
-# =========================================================
-
-def build_swing_table(df: pd.DataFrame) -> pd.DataFrame:
-
-    df = swing_filter(df)
-    df["score"] = df.apply(compute_swing_score, axis=1)
-    df["trade_bias"] = "Bullish"
-    df["trade_style"] = df.apply(classify_swing_trade_style, axis=1)
-
-    df = df.sort_values("score", ascending=False).reset_index(drop=True)
-    df["rank"] = df.index + 1
-
-    return df.rename(columns={
-        "symbol": "Symbol",
-        "macd_status": "MACD Status",
-        "score": "Score",
-        "price": "Price",
-        "pct_chg": "% Chg",
-        "adr": "ADR %",
-        "liquidity": "Liquidity",
-        "sector": "Sector",
-        "trade_bias": "Trade Bias",
-        "trade_style": "Trade Style",
-        "rank": "Rank"
-    })[[
-        "Rank","Symbol","Trade Bias","Trade Style","MACD Status",
-        "Score","Price","% Chg","ADR %","Liquidity","Sector"
-    ]]
-
-
-# =========================================================
-# BUILD POSITIONAL TABLE (QUALITY FILTERED)
-# =========================================================
-
-def build_positional_table(df: pd.DataFrame) -> pd.DataFrame:
-
-    # --- Compute score first ---
-    df["score"] = df.apply(compute_positional_score, axis=1)
-
-    # --- Quality Filter ---
-    df = df[
-        (df["macd_status"].isin(["Expansion", "Early Expansion", "Positive"])) &
-        (df["score"] >= 70)
-    ].copy()
-
-    # --- Add Bias & Style ---
-    df["trade_bias"] = "Bullish"
-    df["trade_style"] = df.apply(classify_positional_trade_style, axis=1)
-
-    # --- Strength & Action ---
-    df["trend_strength"] = np.where(df["score"] >= 85, "Strong", "Moderate")
-    df["portfolio_action"] = np.where(df["score"] >= 80, "Accumulate", "Hold")
-
-    # --- Sort & Rank ---
-    df = df.sort_values("score", ascending=False).reset_index(drop=True)
-    df["rank"] = df.index + 1
-
-    # --- Return Locked Structure ---
-    return df.rename(columns={
-        "symbol": "Symbol",
-        "macd_status": "MACD Status",
-        "score": "Score",
-        "price": "Price",
-        "pct_chg": "% Chg",
-        "adr": "ADR %",
-        "liquidity": "Liquidity",
-        "sector": "Sector",
-        "trade_bias": "Trade Bias",
-        "trade_style": "Trade Style",
-        "trend_strength": "Trend Strength",
-        "portfolio_action": "Portfolio Action",
-        "rank": "Rank"
-    })[[
-        "Rank","Symbol","Trade Bias","Trade Style","MACD Status",
-        "Score","Price","% Chg","ADR %","Liquidity",
-        "Trend Strength","Portfolio Action","Sector"
-    ]]
-
-
-# =========================================================
-# METADATA FOOTER
-# =========================================================
-
-def metadata_footer(source_file, version="Legacy v1.2.6"):
+def metadata_footer(source_file, version="Legacy v1.3.0"):
 
     now = datetime.now()
     session = "LIVE" if 9 <= now.hour < 15 else "POST"
@@ -318,7 +355,8 @@ def metadata_footer(source_file, version="Legacy v1.2.6"):
         "Version_Tag": version,
         "Market Session": session
     }
-
+    
+    
 # =========================================================
 # STYLING HELPERS
 # =========================================================
@@ -326,16 +364,16 @@ def metadata_footer(source_file, version="Legacy v1.2.6"):
 def color_macd(val):
 
     if val == "Expansion":
-        return "background-color: #c6e6c3"   # soft green
+        return "background-color: #c6e6c3"
 
     if val == "Early Expansion":
-        return "background-color: #d4f4dd"   # lighter green
+        return "background-color: #d4f4dd"
 
     if val == "Positive":
-        return "background-color: #fff3cd"   # soft yellow
+        return "background-color: #fff3cd"
 
     if val == "Negative":
-        return "background-color: #f8d7da"   # soft red
+        return "background-color: #f8d7da"
 
     return ""
 
@@ -343,12 +381,12 @@ def color_macd(val):
 def color_trend(val):
 
     if val == "Strong":
-        return "background-color: #c6e6c3"   # green
+        return "background-color: #c6e6c3"
 
     if val == "Moderate":
-        return "background-color: #fff3cd"   # yellow
+        return "background-color: #fff3cd"
 
     if val == "Weak":
-        return "background-color: #f8d7da"   # red
+        return "background-color: #f8d7da"
 
     return ""
