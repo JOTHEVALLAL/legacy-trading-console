@@ -262,6 +262,40 @@ def compute_positional_score(row):
 
 
 # =========================================================
+# TRADE STYLE (STANDARDIZED)
+# =========================================================
+
+def classify_swing_trade_style(row):
+
+    if row["macd_status"] in ["Expansion", "Positive"] and row["adr"] >= 5:
+        return "Volatility Expansion"
+
+    if row["macd_status"] in ["Expansion", "Early Expansion"] and row["pct_chg"] >= 2:
+        return "Breakout Setup"
+
+    if row["macd_status"] == "Early Expansion":
+        return "Momentum Expansion"
+
+    return "Trend Continuation"
+
+
+def classify_positional_trade_style(row):
+
+    if row["macd_status"] == "Negative":
+        return "Weak Structure"
+
+    if row["score"] >= 85 and row["macd_status"] in ["Expansion", "Positive"]:
+        return "Structural Trend"
+
+    if row["score"] >= 75:
+        return "Positional Momentum"
+
+    return "Accumulation Phase"
+
+
+
+
+# =========================================================
 # SWING TABLE
 # =========================================================
 
@@ -271,7 +305,7 @@ def build_swing_table(df: pd.DataFrame) -> pd.DataFrame:
 
     df["score"] = df.apply(compute_swing_score, axis=1)
     df["trade_bias"] = "Bullish"
-    df["trade_style"] = "Momentum"
+    df["trade_style"] = df.apply(classify_swing_trade_style, axis=1)
 
     entries = df.apply(compute_entry_signal, axis=1)
 
@@ -346,7 +380,7 @@ def build_positional_table(df: pd.DataFrame) -> pd.DataFrame:
     ].copy()
 
     df["trade_bias"] = "Bullish"
-    df["trade_style"] = "Positional"
+    df["trade_style"] = df.apply(classify_positional_trade_style, axis=1)
     df["trend_strength"] = np.where(df["score"] >= 85, "Strong", "Moderate")
     df["portfolio_action"] = np.where(df["score"] >= 80, "Accumulate", "Hold")
 
