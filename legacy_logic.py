@@ -101,10 +101,20 @@ def compute_entry_signal(row):
     pivot_close = close_series.iloc[-30:].max()
     current_close = close_series.iloc[-1]
 
-    # ----- Structure-Based SL (10-day low) -----
-    recent_low = close_series.iloc[-10:].min()
-    sl_price = round(recent_low * 0.995, 2)
+    # ===== EMA CALCULATION =====
+    ema10_series = close_series.ewm(span=10, adjust=False).mean()
+    ema21_series = close_series.ewm(span=21, adjust=False).mean()
 
+    ema10 = ema10_series.iloc[-1]
+    ema21 = ema21_series.iloc[-1]
+
+    # ===== Adaptive EMA SL =====
+    if row["macd_status"] in ["Expansion", "Early Expansion"]:
+        sl_price = round(ema10 * 0.995, 2)   # tighter trailing
+    else:
+        sl_price = round(ema21 * 0.995, 2)   # slightly wider trailing
+
+    # ===== Entry =====
     entry_price = round(pivot_close * 1.002, 2)
     distance_pct = (pivot_close - current_close) / pivot_close * 100
 
