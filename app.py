@@ -63,6 +63,7 @@ num_format = {
     "% Chg": "{:.2f}",
     "ADR %": "{:.2f}",
     "Liquidity": "{:,.2f}",
+    "SL (₹)": "{:.2f}",
 }
 
 # ---------- Swing Table ----------

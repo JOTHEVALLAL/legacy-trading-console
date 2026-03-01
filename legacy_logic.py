@@ -46,55 +46,83 @@ def load_data(path: str) -> pd.DataFrame:
 
 
 # =========================================================
-# CLOSE SERIES HELPER (ROBUST)
+# VOLUME SERIES HELPER (30 Days)
 # =========================================================
 
 def get_close_series(row):
 
-    close_cols = [c for c in row.index if c.startswith("close")]
+    vol_cols = [c for c in row.index if c.startswith("volume")]
 
     def extract_number(col):
-        if col == "close":
+        if col == "volume":
             return 0
         digits = ''.join(filter(str.isdigit, col))
         return int(digits) if digits else 0
 
-    close_cols_sorted = sorted(close_cols, key=extract_number, reverse=True)
-    closes = row[close_cols_sorted].astype(float).values
+    vol_cols_sorted = sorted(vol_cols, key=extract_number, reverse=True)
+    volumes = row[vol_cols_sorted].astype(float).values
 
-    return pd.Series(closes)
+    return pd.Series(volumes)
 
 
 # =========================================================
-# ENTRY + SIGNAL (Close-Based Breakout)
+# ENTRY + SIGNAL (SL + Volume + 52W)
 # =========================================================
+
 
 def compute_entry_signal(row):
 
-    series = get_close_series(row)
+    close_series = get_close_series(row)
+    vol_series = get_volume_series(row)
 
-    if len(series) < 30:
-        return "", ""
+    if len(close_series) < 30:
+        return "", "", ""
 
-    pivot_close = series.iloc[-30:].max()
-    current_close = series.iloc[-1]
+    pivot_close = close_series.iloc[-30:].max()
+    current_close = close_series.iloc[-1]
 
-    distance_pct = (pivot_close - current_close) / pivot_close * 100
+    # ----- Structure-Based SL (10-day low) -----
+    recent_low = close_series.iloc[-10:].min()
+    sl_price = round(recent_low * 0.995, 2)
+
     entry_price = round(pivot_close * 1.002, 2)
+    distance_pct = (pivot_close - current_close) / pivot_close * 100
 
     icon = ""
     signal = ""
 
+    # ----- Volume Baseline -----
+    if len(vol_series) >= 30:
+        current_vol = vol_series.iloc[-1]
+        avg_vol_30 = vol_series.iloc[-30:].mean()
+    else:
+        current_vol = 0
+        avg_vol_30 = 0
+
+    # ----- Breakout Logic -----
     if current_close >= pivot_close:
         icon = " 🔥"
-        signal = "Breakout – Day 1"
+
+        if avg_vol_30 > 0 and current_vol > 1.3 * avg_vol_30:
+            signal = "Breakout – Strong Vol"
+        else:
+            signal = "Breakout"
+
     elif distance_pct <= 2:
         icon = " ⚡"
         signal = f"Near Pivot ({round(distance_pct,2)}%)"
+
     else:
         signal = f"Watching – {round(distance_pct,2)}% below"
 
-    return f"{entry_price}{icon}", signal
+    # ----- 52 Week High Context -----
+    if "52week_high" in row and row["52week_high"] > 0:
+        high_52 = float(row["52week_high"])
+        dist_52 = (high_52 - current_close) / high_52 * 100
+        if dist_52 <= 3:
+            signal += " | Near 52W High"
+
+    return f"{entry_price}{icon}", sl_price, signal   
 
 
 # =========================================================
@@ -216,29 +244,31 @@ def build_swing_table(df: pd.DataFrame) -> pd.DataFrame:
     df["trade_style"] = "Momentum"
 
     entries = df.apply(compute_entry_signal, axis=1)
+
     df["Entry (₹)"] = [e[0] for e in entries]
-    df["Signal"] = [e[1] for e in entries]
+    df["SL (₹)"] = [e[1] for e in entries]
+    df["Signal"] = [e[2] for e in entries]
 
     df = df.sort_values("score", ascending=False).reset_index(drop=True)
     df["rank"] = df.index + 1
 
     return df.rename(columns={
-        "symbol": "Symbol",
-        "macd_status": "MACD Status",
-        "score": "Score",
-        "price": "Price",
-        "pct_chg": "% Chg",
-        "adr": "ADR %",
-        "liquidity": "Liquidity",
-        "sector": "Sector",
-        "trade_bias": "Trade Bias",
-        "trade_style": "Trade Style",
-        "rank": "Rank"
-    })[[
-        "Rank","Symbol","Trade Bias","Trade Style","MACD Status",
-        "Score","Entry (₹)","Signal",
-        "Price","% Chg","ADR %","Liquidity","Sector"
-    ]]
+    "symbol": "Symbol",
+    "macd_status": "MACD Status",
+    "score": "Score",
+    "price": "Price",
+    "pct_chg": "% Chg",
+    "adr": "ADR %",
+    "liquidity": "Liquidity",
+    "sector": "Sector",
+    "trade_bias": "Trade Bias",
+    "trade_style": "Trade Style",
+    "rank": "Rank"
+})[[
+    "Rank","Symbol","Trade Bias","Trade Style","MACD Status",
+    "Score","Entry (₹)","SL (₹)","Signal",
+    "Price","% Chg","ADR %","Liquidity","Sector"
+]]
 
 
 # =========================================================
