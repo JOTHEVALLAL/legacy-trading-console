@@ -296,8 +296,8 @@ def build_swing_table(df: pd.DataFrame) -> pd.DataFrame:
     "rank": "Rank"
 })[[
     "Rank","Symbol","Trade Bias","Trade Style","MACD Status",
-    "Score","Entry (₹)","SL (₹)","Signal",
-    "Price","% Chg","ADR %","Liquidity","Sector"
+    "Score","Price","% Chg","Entry (₹)","SL (₹)","Signal",
+	"ADR %","Liquidity","Sector"
 ]]
 
 
