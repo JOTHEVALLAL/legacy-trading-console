@@ -292,8 +292,50 @@ def classify_positional_trade_style(row):
 
     return "Accumulation Phase"
 
+# =========================================================
+# TRADE BIAS (FULL STRUCTURE – SHORT LABELS)
+# =========================================================
+def classify_swing_trade_bias(row):
 
+    close_series = get_close_series(row)
 
+    if len(close_series) < 30:
+        return "Bullish"
+
+    pivot = close_series.iloc[-30:].max()
+    current = close_series.iloc[-1]
+
+    ema10 = close_series.ewm(span=10, adjust=False).mean().iloc[-1]
+    ema21 = close_series.ewm(span=21, adjust=False).mean().iloc[-1]
+
+    distance_pct = (pivot - current) / pivot * 100
+
+    if row["macd_status"] == "Expansion" and current >= pivot:
+        return "Strong Bullish"
+
+    if row["macd_status"] == "Early Expansion" and distance_pct <= 2:
+        return "Pre Breakout"
+
+    if current > ema21 and row["macd_status"] == "Positive":
+        return "Trend Bullish"
+
+    if current > ema21 and current <= ema10 * 1.01:
+        return "Pullback"
+
+    return "Bullish"
+
+def classify_positional_trade_bias(row):
+
+    if row["score"] >= 85 and row["VCP Status"] == "Confirmed VCP":
+        return "Structural Leader"
+
+    if row["score"] >= 80:
+        return "Trend Leader"
+
+    if row["VCP Status"] == "Developing VCP":
+        return "Accumulation"
+
+    return "Bullish"
 
 # =========================================================
 # SWING TABLE
@@ -304,7 +346,7 @@ def build_swing_table(df: pd.DataFrame) -> pd.DataFrame:
     df = swing_filter(df)
 
     df["score"] = df.apply(compute_swing_score, axis=1)
-    df["trade_bias"] = "Bullish"
+    df["trade_bias"] = df.apply(classify_swing_trade_bias, axis=1)
     df["trade_style"] = df.apply(classify_swing_trade_style, axis=1)
 
     entries = df.apply(compute_entry_signal, axis=1)
@@ -379,7 +421,7 @@ def build_positional_table(df: pd.DataFrame) -> pd.DataFrame:
         (df["score"] >= 70)
     ].copy()
 
-    df["trade_bias"] = "Bullish"
+    df["trade_bias"] = df.apply(classify_positional_trade_bias, axis=1)
     df["trade_style"] = df.apply(classify_positional_trade_style, axis=1)
     df["trend_strength"] = np.where(df["score"] >= 85, "Strong", "Moderate")
     df["portfolio_action"] = np.where(df["score"] >= 80, "Accumulate", "Hold")
