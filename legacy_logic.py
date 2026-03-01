@@ -46,10 +46,29 @@ def load_data(path: str) -> pd.DataFrame:
 
 
 # =========================================================
-# VOLUME SERIES HELPER (30 Days)
+# CLOSE SERIES HELPER
 # =========================================================
 
 def get_close_series(row):
+
+    close_cols = [c for c in row.index if c.startswith("close")]
+
+    def extract_number(col):
+        if col == "close":
+            return 0
+        digits = ''.join(filter(str.isdigit, col))
+        return int(digits) if digits else 0
+
+    close_cols_sorted = sorted(close_cols, key=extract_number, reverse=True)
+    closes = row[close_cols_sorted].astype(float).values
+
+    return pd.Series(closes)
+
+# =========================================================
+# VOLUME SERIES HELPER (30 Days)
+# =========================================================
+
+def get_volume_series(row):
 
     vol_cols = [c for c in row.index if c.startswith("volume")]
 
@@ -63,6 +82,7 @@ def get_close_series(row):
     volumes = row[vol_cols_sorted].astype(float).values
 
     return pd.Series(volumes)
+
 
 
 # =========================================================
