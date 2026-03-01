@@ -407,27 +407,36 @@ def compute_vcp_status(row):
     else:
         return ""
 
-
+    
 # =========================================================
 # POSITIONAL TABLE
 # =========================================================
 
 def build_positional_table(df: pd.DataFrame) -> pd.DataFrame:
 
+    # --- Compute Score ---
     df["score"] = df.apply(compute_positional_score, axis=1)
 
+    # --- Filter ---
     df = df[
         (df["macd_status"].isin(["Expansion", "Early Expansion", "Positive"])) &
         (df["score"] >= 70)
     ].copy()
 
-    df["trade_bias"] = df.apply(classify_positional_trade_bias, axis=1)
+    # --- Trade Style ---
     df["trade_style"] = df.apply(classify_positional_trade_style, axis=1)
+
+    # --- Compute VCP ---
+    df["VCP Status"] = df.apply(compute_vcp_status, axis=1)
+
+    # --- Trade Bias (AFTER VCP exists) ---
+    df["trade_bias"] = df.apply(classify_positional_trade_bias, axis=1)
+
+    # --- Strength & Portfolio Action ---
     df["trend_strength"] = np.where(df["score"] >= 85, "Strong", "Moderate")
     df["portfolio_action"] = np.where(df["score"] >= 80, "Accumulate", "Hold")
 
-    df["VCP Status"] = df.apply(compute_vcp_status, axis=1)
-
+    # --- Sort & Rank ---
     df = df.sort_values("score", ascending=False).reset_index(drop=True)
     df["rank"] = df.index + 1
 
@@ -451,6 +460,8 @@ def build_positional_table(df: pd.DataFrame) -> pd.DataFrame:
         "Score","Price","% Chg","ADR %","Liquidity",
         "Trend Strength","Portfolio Action","Sector"
     ]]
+
+
 
 # =========================================================
 # NEAR MISS FILTER (LOCKED)
