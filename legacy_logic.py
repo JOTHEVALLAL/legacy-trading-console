@@ -145,6 +145,20 @@ def compute_entry_signal(row):
     else:
         signal = f"Watching – {round(distance_pct,2)}% below"
 
+    # ----- Institutional Flag -----
+    
+    institutional_flag = ""
+
+    if (
+        current_close >= pivot_close and
+        avg_vol_30 > 0 and
+        current_vol >= 1.5 * avg_vol_30 and
+        row["macd_status"] in ["Expansion", "Early Expansion"]
+    ):
+    institutional_flag = "Inst Breakout"
+
+
+
     # ----- 52 Week High Context -----
     if "52week_high" in row and row["52week_high"] > 0:
         high_52 = float(row["52week_high"])
@@ -152,7 +166,7 @@ def compute_entry_signal(row):
         if dist_52 <= 3:
             signal += " | Near 52W High"
 
-    return f"{entry_price}{icon}", sl_price, signal   
+    return f"{entry_price}{icon}", sl_price, signal, institutional_flag  
 
 
 # =========================================================
@@ -354,7 +368,9 @@ def build_swing_table(df: pd.DataFrame) -> pd.DataFrame:
     df["Entry (₹)"] = [e[0] for e in entries]
     df["SL (₹)"] = [e[1] for e in entries]
     df["Signal"] = [e[2] for e in entries]
-
+    df["Inst Accum"] = [e[3] for e in entries]
+    
+    
     df = df.sort_values("score", ascending=False).reset_index(drop=True)
     df["rank"] = df.index + 1
 
@@ -373,7 +389,7 @@ def build_swing_table(df: pd.DataFrame) -> pd.DataFrame:
 })[[
     "Rank","Symbol","Trade Bias","Trade Style","MACD Status",
     "Score","Price","% Chg","Entry (₹)","SL (₹)","Signal",
-	"ADR %","Liquidity","Sector"
+	"Inst Accum","ADR %","Liquidity","Sector"
 ]]
 
 
