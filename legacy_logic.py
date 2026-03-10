@@ -94,42 +94,47 @@ def compute_entry_signal(row):
 
     close_series = get_close_series(row)
     vol_series = get_volume_series(row)
-
+    
+     # ===== EMA CALCULATION =====
     if len(close_series) < 30:
-        return "", "", ""
+        return "", "", "", ""
 
     pivot_close = close_series.iloc[-30:].max()
     current_close = close_series.iloc[-1]
 
-    # ===== EMA CALCULATION =====
     ema10_series = close_series.ewm(span=10, adjust=False).mean()
     ema21_series = close_series.ewm(span=21, adjust=False).mean()
 
     ema10 = ema10_series.iloc[-1]
     ema21 = ema21_series.iloc[-1]
-
+     
     # ===== Adaptive EMA SL =====
+    
     if row["macd_status"] in ["Expansion", "Early Expansion"]:
-        sl_price = round(ema10 * 0.995, 2)   # tighter trailing
+        sl_price = round(ema10 * 0.995, 2)
     else:
-        sl_price = round(ema21 * 0.995, 2)   # slightly wider trailing
+        sl_price = round(ema21 * 0.995, 2)
 
     # ===== Entry =====
+
     entry_price = round(pivot_close * 1.002, 2)
     distance_pct = (pivot_close - current_close) / pivot_close * 100
 
     icon = ""
     signal = ""
-
+    
+    
     # ----- Volume Baseline -----
+    
     if len(vol_series) >= 30:
         current_vol = vol_series.iloc[-1]
         avg_vol_30 = vol_series.iloc[-30:].mean()
     else:
         current_vol = 0
         avg_vol_30 = 0
-
+    
     # ----- Breakout Logic -----
+    
     if current_close >= pivot_close:
         icon = " 🔥"
 
@@ -144,7 +149,7 @@ def compute_entry_signal(row):
 
     else:
         signal = f"Watching – {round(distance_pct,2)}% below"
-
+    
     # ----- Institutional Flag -----
     
     institutional_flag = ""
@@ -155,18 +160,15 @@ def compute_entry_signal(row):
         current_vol >= 1.5 * avg_vol_30 and
         row["macd_status"] in ["Expansion", "Early Expansion"]
     ):
-    institutional_flag = "Inst Breakout"
+        institutional_flag = "Inst Breakout"
 
-
-
-    # ----- 52 Week High Context -----
     if "52week_high" in row and row["52week_high"] > 0:
         high_52 = float(row["52week_high"])
         dist_52 = (high_52 - current_close) / high_52 * 100
         if dist_52 <= 3:
             signal += " | Near 52W High"
 
-    return f"{entry_price}{icon}", sl_price, signal, institutional_flag  
+    return f"{entry_price}{icon}", sl_price, signal, institutional_flag
 
 
 # =========================================================
@@ -389,7 +391,7 @@ def build_swing_table(df: pd.DataFrame) -> pd.DataFrame:
 })[[
     "Rank","Symbol","Trade Bias","Trade Style","MACD Status",
     "Score","Price","% Chg","Entry (₹)","SL (₹)","Signal",
-	"Inst Accum","ADR %","Liquidity","Sector"
+    "Inst Accum","ADR %","Liquidity","Sector"
 ]]
 
 
